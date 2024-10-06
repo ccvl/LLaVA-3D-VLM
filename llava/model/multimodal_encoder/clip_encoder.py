@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 
 from transformers import CLIPVisionModel, CLIPImageProcessor, CLIPVisionConfig
+from transformers import AutoImageProcessor, AutoModel
 
 
 class CLIPVisionTower(nn.Module):
@@ -30,6 +31,12 @@ class CLIPVisionTower(nn.Module):
         self.vision_tower = CLIPVisionModel.from_pretrained(self.vision_tower_name, device_map=device_map)
         self.vision_tower.requires_grad_(False)
 
+        assert self.vision_tower_name == 'openai/clip-vit-large-patch14'
+        vision_tower_name2 = 'facebook/dinov2-large'
+        self.image_processor2 = AutoImageProcessor.from_pretrained(vision_tower_name2)
+        self.vision_tower2 = AutoModel.from_pretrained(vision_tower_name2, device_map=device_map)
+        self.vision_tower2.requires_grad_(False)
+
         self.is_loaded = True
 
     def feature_select(self, image_forward_outs):
@@ -43,16 +50,21 @@ class CLIPVisionTower(nn.Module):
         return image_features
 
     @torch.no_grad()
-    def forward(self, images):
+    def forward(self, images, images2):
         if type(images) is list:
             image_features = []
-            for image in images:
+            for image, image2 in zip(images, images2):
                 image_forward_out = self.vision_tower(image.to(device=self.device, dtype=self.dtype).unsqueeze(0), output_hidden_states=True)
                 image_feature = self.feature_select(image_forward_out).to(image.dtype)
-                image_features.append(image_feature)
+                image_forward_out2 = self.vision_tower2(image2.to(device=self.device, dtype=self.detype).unsqueeze(0), output_hidden_states=True)
+                image_feature2 = self.feature_select(image_forward_out2).to(image.dtype)
+                image_features.append(torch.cat([image_feature, image_feature2], dim=-1))
         else:
             image_forward_outs = self.vision_tower(images.to(device=self.device, dtype=self.dtype), output_hidden_states=True)
-            image_features = self.feature_select(image_forward_outs).to(images.dtype)
+            image_forward_outs2 = self.vision_tower2(images2.to(device=self.device, dtype=self.dtype), output_hidden_states=True)
+            image_features1 = self.feature_select(image_forward_outs).to(images.dtype)
+            image_features2 = self.feature_select(image_forward_outs2).to(images.dtype)
+            image_features = torch.cat([image_features1, image_features2], dim=-1)
 
         return image_features
 
@@ -92,6 +104,8 @@ class CLIPVisionTower(nn.Module):
 class CLIPVisionTowerS2(CLIPVisionTower):
     def __init__(self, vision_tower, args, delay_load=False):
         super().__init__(vision_tower, args, delay_load)
+
+        raise NotImplementedError('3D-aware encoder not implemented for CLIPVisionTowerS2')
 
         self.s2_scales = getattr(args, 's2_scales', '336,672,1008')
         self.s2_scales = list(map(int, self.s2_scales.split(',')))
